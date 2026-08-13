@@ -22,7 +22,7 @@ TODAY_STR = TODAY.strftime("%Y-%m-%d")
 TODAY_LABEL = TODAY.strftime("%Y년 %m월 %d일")
 
 API_KEY = os.environ.get("ANTHROPIC_API_KEY")
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-sonnet-5"
 
 CATEGORY_COLOR = {
     "브랜드·캠페인": "#3E6E64",
