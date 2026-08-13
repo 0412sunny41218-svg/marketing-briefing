@@ -1,11 +1,12 @@
 """
-generate_briefing.py
----------------------
+generate_briefing.py (무료 버전 - AI 호출 없음)
+--------------------------------------------
 1) data/raw_YYYY-MM-DD.json 을 읽어서
-2) Claude API로 카테고리 분류 + 2~3문장 요약을 만들고
+2) 검색에 사용된 키워드를 기준으로 카테고리를 나누고 (규칙 기반, AI 아님)
 3) docs/index.html (오늘자) + docs/archive/YYYY-MM-DD.html (아카이브)를 생성한다.
 
-환경변수 ANTHROPIC_API_KEY 필요 (GitHub Actions Secrets로 주입).
+AI API를 전혀 쓰지 않아서 비용이 0원이지만, 대신 "왜 눈여겨볼만한지" 같은
+요약 문장은 만들지 않고 기사 제목과 출처만 정리해서 보여준다.
 """
 
 import json
@@ -14,15 +15,22 @@ import re
 import sys
 from datetime import datetime, timezone, timedelta
 
-import requests
-
 KST = timezone(timedelta(hours=9))
 TODAY = datetime.now(KST)
 TODAY_STR = TODAY.strftime("%Y-%m-%d")
 TODAY_LABEL = TODAY.strftime("%Y년 %m월 %d일")
 
-API_KEY = os.environ.get("ANTHROPIC_API_KEY")
-MODEL = "claude-sonnet-5"
+# 검색 키워드 → 카테고리 매핑 (규칙 기반 분류)
+KEYWORD_TO_CATEGORY = {
+    "브랜드 캠페인": "브랜드·캠페인",
+    "브랜드 전략": "브랜드·캠페인",
+    "브랜드 리브랜딩": "브랜드·캠페인",
+    "콘텐츠 기획": "콘텐츠·미디어",
+    "소비자 트렌드": "소비자·트렌드",
+    "마케팅 트렌드": "업계·비즈니스",
+    "디지털 마케팅": "업계·비즈니스",
+    "광고 업계": "업계·비즈니스",
+}
 
 CATEGORY_COLOR = {
     "브랜드·캠페인": "#3E6E64",
@@ -43,49 +51,21 @@ def load_raw():
         return json.load(f)
 
 
-def call_claude(items):
-    """수집된 기사 목록을 Claude에게 보내 분류+요약된 JSON을 받는다."""
-    listing = "\n".join(
-        f"{i+1}. [{it['source']}] {it['title']} ({it['link']})"
-        for i, it in enumerate(items)
-    )
-
-    system_prompt = (
-        "너는 마케팅/브랜드/콘텐츠 기획 취업 준비생을 위한 뉴스 브리핑 편집자야. "
-        "아래 기사 목록에서 실제로 마케팅, 브랜드 전략, 콘텐츠 기획, 광고, 소비자 트렌드와 "
-        "관련이 있는 기사만 골라 정리해. 중복되거나 같은 사안을 다루는 기사는 하나로 합쳐. "
-        "관련성이 낮은 기사(단순 주가, 스포츠, 정치성 기사 등)는 제외해.\n\n"
-        "각 기사는 다음 카테고리 중 하나로 분류: 브랜드·캠페인, 콘텐츠·미디어, 소비자·트렌드, 업계·비즈니스, 기타\n\n"
-        "반드시 아래 JSON 형식으로만 응답해. 다른 텍스트나 코드블록 표시(```) 없이 순수 JSON 배열만:\n"
-        '[{"category": "...", "headline": "간결한 한국어 헤드라인 (원제목 다듬어도 됨)", '
-        '"summary": "2~3문장 한국어 요약, 취업준비생 관점에서 왜 눈여겨볼만한지 포함", '
-        '"source": "...", "link": "..."}]'
-    )
-
-    resp = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json={
-            "model": MODEL,
-            "max_tokens": 4000,
-            "system": system_prompt,
-            "messages": [{"role": "user", "content": listing}],
-        },
-        timeout=120,
-    )
-    if resp.status_code >= 400:
-        print(f"[API 에러 상세] status={resp.status_code} body={resp.text}", file=sys.stderr)
-    resp.raise_for_status()
-    data = resp.json()
-    text = "".join(
-        block["text"] for block in data["content"] if block.get("type") == "text"
-    )
-    text = re.sub(r"^```json|```$", "", text.strip(), flags=re.MULTILINE).strip()
-    return json.loads(text)
+def categorize(items):
+    """AI 없이, 검색 키워드를 기준으로 카테고리를 붙인다."""
+    articles = []
+    for it in items:
+        category = KEYWORD_TO_CATEGORY.get(it.get("keyword", ""), "기타")
+        articles.append(
+            {
+                "category": category,
+                "headline": it["title"],
+                "source": it.get("source") or "출처 미상",
+                "link": it["link"],
+                "keyword": it.get("keyword", ""),
+            }
+        )
+    return articles
 
 
 CSS = """
@@ -118,7 +98,7 @@ body{
 }
 .stamp{
   font-family:'IBM Plex Mono',monospace;
-  font-size:12px;color:var(--mono);
+  font-size:12px;
   border:1.5px solid var(--accent);
   color:var(--accent);
   padding:6px 12px;border-radius:2px;
@@ -140,16 +120,15 @@ body{
 .card{
   background:var(--paper-raised);
   border-left:4px solid var(--rule);
-  padding:16px 18px;margin-bottom:10px;
+  padding:14px 18px;margin-bottom:8px;
   border-radius:0 3px 3px 0;
 }
 .card h3{
   font-family:'Noto Serif KR',serif;
-  font-size:18px;margin:0 0 8px;font-weight:600;
+  font-size:16.5px;margin:0 0 6px;font-weight:600;
 }
 .card h3 a{color:var(--ink);text-decoration:none;}
 .card h3 a:hover{text-decoration:underline;}
-.card p{margin:0 0 10px;font-size:14.5px;color:var(--ink-soft);}
 .card .meta{
   font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--mono);
 }
@@ -188,7 +167,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
   {sections}
   <footer>
     <span>마케팅·브랜드·콘텐츠 기획 뉴스 자동 브리핑</span>
-    <span>매일 자동 생성</span>
+    <span>매일 자동 생성 (규칙 기반, AI 요약 없음)</span>
   </footer>
 </div>
 </body>
@@ -205,8 +184,7 @@ SECTION_TEMPLATE = """
 CARD_TEMPLATE = """
 <div class="card" style="border-left-color:{color}">
   <h3><a href="{link}" target="_blank" rel="noopener">{headline}</a></h3>
-  <p>{summary}</p>
-  <div class="meta">{source}</div>
+  <div class="meta">{source} · #{keyword}</div>
 </div>
 """
 
@@ -226,8 +204,8 @@ def render_html(articles):
                 color=color,
                 link=a["link"],
                 headline=a["headline"],
-                summary=a["summary"],
                 source=a["source"],
+                keyword=a["keyword"],
             )
             for a in grouped[cat]
         )
@@ -237,7 +215,6 @@ def render_html(articles):
 
 
 def update_archive_index():
-    """docs/archive 안의 파일 목록을 읽어 archive/index.html 목록 페이지를 갱신"""
     arch_dir = "docs/archive"
     os.makedirs(arch_dir, exist_ok=True)
     files = sorted(
@@ -265,17 +242,13 @@ li a{{color:var(--ink);text-decoration:none;}}
 
 
 def main():
-    if not API_KEY:
-        print("[에러] ANTHROPIC_API_KEY 환경변수가 없습니다.", file=sys.stderr)
-        sys.exit(1)
-
     raw_items = load_raw()
     if not raw_items:
         print("[경고] 수집된 기사가 없습니다.")
         sys.exit(0)
 
-    print(f"[요약중] Claude API 호출 ({len(raw_items)}건)")
-    articles = call_claude(raw_items)
+    print(f"[정리중] {len(raw_items)}건 카테고리 분류 (규칙 기반, AI 미사용)")
+    articles = categorize(raw_items)
     print(f"[완료] {len(articles)}건 정리됨")
 
     html = render_html(articles)
