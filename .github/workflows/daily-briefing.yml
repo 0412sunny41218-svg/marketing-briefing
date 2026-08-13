@@ -27,9 +27,7 @@ jobs:
       - name: 뉴스 수집
         run: python scripts/fetch_news.py
 
-      - name: 요약 + 사이트 생성
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - name: 사이트 생성 (AI 미사용, 규칙 기반)
         run: python scripts/generate_briefing.py
 
       - name: 변경사항 커밋 및 푸시
