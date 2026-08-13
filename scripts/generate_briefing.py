@@ -77,6 +77,8 @@ def call_claude(items):
         },
         timeout=120,
     )
+    if resp.status_code >= 400:
+        print(f"[API 에러 상세] status={resp.status_code} body={resp.text}", file=sys.stderr)
     resp.raise_for_status()
     data = resp.json()
     text = "".join(
